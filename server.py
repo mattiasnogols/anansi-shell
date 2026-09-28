@@ -119,7 +119,6 @@ def handle_session(channel):
     key = handshake(channel)
     # send algorithm picked per session; frames carry their algo byte
     algo = random.choice(list(AEAD))
-    send_frame(channel, key, algo, b"anansi-shell ready\n")
     while True:
         time.sleep(random.uniform(2.0, 5.0))
         start = time.monotonic()

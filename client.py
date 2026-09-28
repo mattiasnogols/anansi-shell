@@ -104,15 +104,18 @@ def session(channel, verbose):
     while True:
         data = unseal_frame(key, recv_frame(channel))
         if data == b"ping":
+            # liveness probe
             send_frame(channel, key, algo, b"pong")
             continue
         if data == b"exit":
+            # operator closed the session
             return
         text = data.decode(errors="replace")
         if verbose:
             print(f"$ {text}", flush=True)
         reply = execute(text)
         # b"o" = output, b"d" = cwd, ends the reply
+        # 512 KiB chunks keep every frame under MAX_FRAME
         for start in range(0, len(reply), CHUNK):
             send_frame(channel, key, algo, b"o" + reply[start:start + CHUNK])
         send_frame(channel, key, algo, b"d" + os.getcwd().encode())
@@ -121,6 +124,7 @@ def session(channel, verbose):
 def execute(command):
     """Run a command"""
     words = command.split()
+    # cd must run here, not in the subprocess: a chdir would die with its shell
     if words[:1] == ["cd"]:
         return change_dir(words[1] if len(words) > 1 else "")
     try:

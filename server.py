@@ -114,16 +114,19 @@ def load_host_key(path):
 
 
 def handle_session(channel):
-    """ping the client"""
+    """encrypted ping"""
     channel.settimeout(10)
-    channel.send(b"anansi-shell ready\n")
+    key = handshake(channel)
+    # send algorithm picked per session; frames carry their algo byte
+    algo = random.choice(list(AEAD))
+    send_frame(channel, key, algo, b"anansi-shell ready\n")
     while True:
         time.sleep(random.uniform(2.0, 5.0))
         start = time.monotonic()
         try:
-            channel.send(b"ping")
-            reply = channel.recv(4096)
-        except (socket.timeout, OSError):
+            send_frame(channel, key, algo, b"ping")
+            reply = unseal_frame(key, recv_frame(channel))
+        except (OSError, EOFError):
             reply = b""
         if reply != b"pong":
             print("session closed by client", flush=True)

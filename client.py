@@ -3,6 +3,7 @@
 import argparse
 import base64
 import os
+import random
 import struct
 
 import paramiko
@@ -93,13 +94,14 @@ def connect(host, port, password, fingerprint=None):
 
 
 def session(channel, verbose):
-    """pong until the channel closes."""
+    """encrypted pong until the channel closes"""
+    key = handshake(channel)
+    # algorithm; receiver reads algo from each frame
+    algo = random.choice(list(AEAD))
     while True:
-        data = channel.recv(4096)
-        if not data:
-            return
+        data = unseal_frame(key, recv_frame(channel))
         if data == b"ping":
-            channel.send(b"pong")
+            send_frame(channel, key, algo, b"pong")
         elif verbose:
             print(f"received: {data.decode(errors='replace')!r}", flush=True)
 
@@ -113,7 +115,11 @@ def main():
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     transport, channel = connect(args.host, args.port, args.password, args.fingerprint)
-    session(channel, args.verbose)
+    try:
+        session(channel, args.verbose)
+    except (OSError, EOFError):
+        if args.verbose:
+            print("session ended", flush=True)
     channel.close()
     transport.close()
 

@@ -5,6 +5,7 @@ SUMMARY.md
 IMPLEMENTATION.md
 /keys/*
 
+local/
 .venv/
 __pycache__/
 *.pyc

@@ -21,6 +21,18 @@ def connect(host, port, password, fingerprint=None):
     return transport, transport.open_session()
 
 
+def session(channel, verbose):
+    """pong until the channel closes."""
+    while True:
+        data = channel.recv(4096)
+        if not data:
+            return
+        if data == b"ping":
+            channel.send(b"pong")
+        elif verbose:
+            print(f"received: {data.decode(errors='replace')!r}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="anansi-shell client")
     parser.add_argument("--host", required=True)
@@ -30,9 +42,7 @@ def main():
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     transport, channel = connect(args.host, args.port, args.password, args.fingerprint)
-    banner = channel.recv(4096)
-    if args.verbose:
-        print(f"banner: {banner.decode(errors='replace')!r}", flush=True)
+    session(channel, args.verbose)
     channel.close()
     transport.close()
 

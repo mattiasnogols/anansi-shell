@@ -3,6 +3,7 @@ CRITERIA.md
 LINKS.md
 SUMMARY.md
 IMPLEMENTATION.md
+/keys/*
 
 .venv/
 __pycache__/

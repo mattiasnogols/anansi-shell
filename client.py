@@ -6,9 +6,12 @@ import os
 import struct
 
 import paramiko
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-# this file rewrites itself between sessions, so the operator side must never import mutated code.
+# this file rewrites itself between sessions, so the operator side must never import code.
 # frame mirrored from server.py
 PROTO_VERSION = 1
 AEAD = {1: AESGCM, 2: ChaCha20Poly1305}
@@ -52,6 +55,25 @@ def recv_frame(channel):
     if length > MAX_FRAME:
         raise ValueError(f"frame exceeds {MAX_FRAME} bytes: {length}")
     return read_exactly(channel, length)
+
+
+def send_raw(channel, blob):
+    # public handshake (unencrypted)
+    channel.sendall(struct.pack(">I", len(blob)) + blob)
+
+
+def handshake(channel):
+    """X25519 exchange to obtain session key"""
+    private = X25519PrivateKey.generate()
+    salt = os.urandom(16)
+    send_raw(channel, private.public_key().public_bytes_raw() + salt)
+    peer = X25519PublicKey.from_public_bytes(recv_frame(channel))
+    return derive_key(private.exchange(peer), salt)
+
+
+def derive_key(shared, salt):
+    # shared secret; session key out.
+    return HKDF(hashes.SHA256(), 32, salt, b"anansi-shell v1").derive(shared)
 
 
 def connect(host, port, password, fingerprint=None):

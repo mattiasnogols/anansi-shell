@@ -27,9 +27,13 @@ On the target machine, point the client at it:
 
     .venv/bin/python client.py --host <server-ip> --password <password>
 
+If the server is not up yet, the client retries until it answers (built-in jitter); Once connected, the operator gets an interactive console:
 
-While a session is open, the server sends a ping every few seconds. Stop the client and the server returns to
-listening mode.
+    anansi /home/user> ls -la
+    anansi /home/user> cd /etc
+    anansi /etc> exit
+
+`exit` or Ctrl-D closes the session and the server returns to listening for the next connection.
 
 
 ## License

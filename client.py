@@ -6,6 +6,7 @@ import os
 import random
 import struct
 import subprocess
+import time
 
 import paramiko
 from cryptography.hazmat.primitives import hashes
@@ -96,6 +97,18 @@ def connect(host, port, password, fingerprint=None):
     return transport, transport.open_session()
 
 
+def connect_forever(host, port, password, fingerprint, verbose):
+    """Retry until the operator answers."""
+    while True:
+        try:
+            return connect(host, port, password, fingerprint)
+        except (OSError, EOFError, paramiko.SSHException):
+            if verbose:
+                print("server unreachable, retrying", flush=True)
+            # jitter.
+            time.sleep(random.uniform(2.0, 5.0))
+
+
 def session(channel, verbose):
     """execute operator commands"""
     key = handshake(channel)
@@ -151,7 +164,8 @@ def main():
     parser.add_argument("--fingerprint", help="expected host key SHA256 fingerprint")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    transport, channel = connect(args.host, args.port, args.password, args.fingerprint)
+    transport, channel = connect_forever(args.host, args.port, args.password,
+                                         args.fingerprint, args.verbose)
     try:
         session(channel, args.verbose)
     except (OSError, EOFError):

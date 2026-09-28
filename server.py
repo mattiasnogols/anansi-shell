@@ -11,17 +11,12 @@ import sys
 import time
 
 import paramiko
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-# Inner protocol, version 1. Every message is one frame, big-endian integers:
-#
-#     length (4B) | version (1B) | algo (1B) | nonce (12B) | ciphertext + tag
-#
-# `length` counts the bytes after it, so the receiver reads exactly one frame
-# even when the channel hands out data in random-sized chunks. `version` and
-# `algo` travel unencrypted but authenticated: the receiver needs them to pick
-# a cipher, and rewriting them breaks the tag. The plaintext is base64-encoded
-# before encryption, so binary command output survives the whole stack.
+
 PROTO_VERSION = 1
 AEAD = {1: AESGCM, 2: ChaCha20Poly1305}
 MAX_FRAME = 2 << 20  # room for the base64 of a 1 MiB payload
@@ -29,7 +24,6 @@ MAX_FRAME = 2 << 20  # room for the base64 of a 1 MiB payload
 
 def seal_frame(key, algo, plaintext):
     """Encrypt into header + nonce + ciphertext"""
-    # nonce to never repeat under the same key
     nonce = os.urandom(12)
     header = bytes((PROTO_VERSION, algo))
     # AEAD to encrypt and authenticate. header covered by the tag but stays readable.
@@ -69,6 +63,28 @@ def recv_frame(channel):
     if length > MAX_FRAME:
         raise ValueError(f"frame exceeds {MAX_FRAME} bytes: {length}")
     return read_exactly(channel, length)
+
+
+def send_raw(channel, blob):
+    # public handshake values (unencrypted)
+    channel.sendall(struct.pack(">I", len(blob)) + blob)
+
+
+def handshake(channel):
+    """X25519 exchange over the channel, returns the session key"""
+    private = X25519PrivateKey.generate()
+    offer = recv_frame(channel)
+    # offer is client public key (32 bytes) + salt (16 bytes)
+    if len(offer) != 48:
+        raise ValueError(f"bad offer: {len(offer)} bytes")
+    peer = X25519PublicKey.from_public_bytes(offer[:32])
+    send_raw(channel, private.public_key().public_bytes_raw())
+    return derive_key(private.exchange(peer), offer[32:])
+
+
+def derive_key(shared, salt):
+    # shared secret in, session key out.
+    return HKDF(hashes.SHA256(), 32, salt, b"anansi-shell v1").derive(shared)
 
 
 class ShellServer(paramiko.ServerInterface):

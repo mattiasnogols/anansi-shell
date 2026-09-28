@@ -72,7 +72,7 @@ def handshake(channel):
 
 
 def derive_key(shared, salt):
-    # shared secret; session key out.
+    # shared secret in; session key out.
     return HKDF(hashes.SHA256(), 32, salt, b"anansi-shell v1").derive(shared)
 
 

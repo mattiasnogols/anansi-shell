@@ -374,6 +374,15 @@ def mutate_self(path, verbose):
             print(f"mutation rejected: {exc}", flush=True)
 
 
+def quiet_close(thing):
+    # a dead transport makes paramiko raise EOFError
+    # so raise inside main's finally statement will skip the rewrite that follows it
+    try:
+        thing.close()
+    except (OSError, EOFError):
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="anansi-shell client")
     parser.add_argument("--host")
@@ -397,10 +406,12 @@ def main():
         if args.verbose:
             print("session ended", flush=True)
     finally:
-        channel.close()
-        transport.close()
-        # every session end rewrites the file, dropped or killed ones too;
-        # --selfcheck returned above, so verification runs never loop
+        # the server closes first after b"exit", so these can hit a dead transport
+        # a raise here would skip the rewrite below
+        quiet_close(channel)
+        quiet_close(transport)
+        # every session end rewrites the file (dropped/killed ones too
+        # --selfcheck returned above, so runs never loop
         mutate_self(__file__, args.verbose)
 
 

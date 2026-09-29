@@ -1,12 +1,15 @@
 """Target, connects back to the operator over SSH."""
 
 import argparse
+import ast
 import base64
+import io
 import os
 import random
 import struct
 import subprocess
 import time
+import tokenize
 
 import paramiko
 from cryptography.exceptions import InvalidTag
@@ -178,6 +181,43 @@ def selfcheck():
     except InvalidTag:
         return
     raise SystemExit("failed check: tamper undetected")
+
+
+def split_mutable(source):
+    """Split own source into."""
+    lines = source.splitlines(keepends=True)
+    start = [i for i, line in enumerate(lines) if line.strip() == MUTABLE_START]
+    end = [i for i, line in enumerate(lines) if line.strip() == MUTABLE_END]
+    if len(start) != 1 or len(end) != 1 or start[0] > end[0]:
+        raise ValueError("mutable markers malformed")
+    i, j = start[0], end[0]
+    return "".join(lines[:i + 1]), "".join(lines[i + 1:j]), "".join(lines[j:])
+
+
+def internal_names(region, immutable):
+    """Defined in the region, not loaded outside."""
+    defined = set()
+    for node in ast.walk(ast.parse(region)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.arg):
+            defined.add(node.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            defined.add(node.id)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            defined.add(node.name)
+    outside = {node.id for node in ast.walk(ast.parse(immutable))
+               if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    return defined - outside
+
+
+def string_literals(region):
+    """Renames must not corrupt these."""
+    blobs = []
+    for token in tokenize.generate_tokens(io.StringIO(region).readline):
+        if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE):
+            blobs.append(token.string)
+    return " ".join(blobs)
 
 
 def main():

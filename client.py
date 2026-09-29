@@ -229,24 +229,24 @@ def string_literals(region):
     return " ".join(blobs)
 
 
-def fresh_name(taken):
+def fresh_name(used_names):
     """New identifier"""
     while True:
         name = "".join(random.choice("bcdfgklmnprstvz") + random.choice("aeiou")
                        for _ in range(random.randint(2, 3)))
-        if name not in taken:
-            taken.add(name)
+        if name not in used_names:
+            used_names.add(name)
             return name
 
 
 def rename_transform(source):
     """Rewrite the region with new internal names."""
     head, region, tail = split_mutable(source)
-    taken = set(re.findall(r"\b[A-Za-z_]\w*\b", source))
+    used_names = set(re.findall(r"\b[A-Za-z_]\w*\b", source))
     mapping = {}
     for name in sorted(internal_names(region, head + tail)):
-        mapping[name] = fresh_name(taken)
-    # replace NAME tokens only
+        mapping[name] = fresh_name(used_names)
+    # NAME tokens only to be replaced
     lines = region.splitlines(keepends=True)
     tokens = tokenize.generate_tokens(io.StringIO(region).readline)
     edits = [t for t in tokens if t.type == tokenize.NAME and t.string in mapping]
@@ -254,6 +254,64 @@ def rename_transform(source):
         row, col = token.start
         end = token.end[1]
         lines[row - 1] = lines[row - 1][:col] + mapping[token.string] + lines[row - 1][end:]
+    return head + "".join(lines) + tail
+
+
+# else, elif, except, finally statements are never visited:
+# inserting a line above one of those would detach it from its statement.
+BLOCK_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.If, ast.For,
+               ast.AsyncFor, ast.While, ast.With, ast.Try)
+
+# Values that keep branch from ever running.
+JUNK_VALUES = ("None", "False", "0", '""', 'b""')
+
+
+def starts_own_line(node, lines):
+    line = lines[node.lineno - 1]
+    return not line[:node.col_offset].strip()
+
+
+def collect_statements(statements, lines, found):
+    """Statements that start their own line, block bodies includedd."""
+    for node in statements:
+        if not starts_own_line(node, lines):
+            continue
+        found.append(node)
+        if isinstance(node, BLOCK_TYPES):
+            collect_statements(node.body, lines, found)
+
+
+def insertion_points(region):
+    """A junk line may safely be inserted above."""
+    lines = region.splitlines(keepends=True)
+    found = []
+    collect_statements(ast.parse(region).body, lines, found)
+    return found
+
+
+def junk_line(indent, used_names):
+    """a dead assignment"""
+    if random.random() < 0.5:
+        value = random.choice((str(random.randint(0, 9999)),) + JUNK_VALUES)
+        return f"{indent}{fresh_name(used_names)} = {value}\n"
+    return f"{indent}if {random.choice(JUNK_VALUES)}: pass\n"
+
+
+def junk_transform(source):
+    """Insert inert statements at boundaries inside the region."""
+    head, region, tail = split_mutable(source)
+    used_names = set(re.findall(r"\b[A-Za-z_]\w*\b", source))
+    lines = region.splitlines(keepends=True)
+    points = insertion_points(region)
+
+    count = random.randint(1, max(1, len(points) // 4))
+    chosen = random.sample(points, count)
+
+    # bottom to up: each insertion shifts every line below it,
+    # so the lowest positions have to be consumed last.
+    for node in sorted(chosen, key=lambda item: item.lineno, reverse=True):
+        junk = junk_line(" " * node.col_offset, used_names)
+        lines.insert(node.lineno - 1, junk)
     return head + "".join(lines) + tail
 
 

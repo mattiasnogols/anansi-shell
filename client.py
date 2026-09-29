@@ -15,12 +15,35 @@ import tempfile
 import time
 import tokenize
 
-import paramiko
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+VENV = ".anansi-venv"
+DEPS = ("paramiko>=3.4", "cryptography>=42.0")
+
+
+def bootstrap():
+    """Install dependencies into a private venv"""
+    # ubuntu blocks system pip, so carry its own
+    if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+        # inside a venv and still missing imports: do not loop
+        raise SystemExit("dependencies missing inside the venv")
+    root = os.path.dirname(os.path.abspath(__file__))
+    venv = os.path.join(root, VENV)
+    if not os.path.exists(os.path.join(venv, "bin", "python")):
+        subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+        subprocess.run([os.path.join(venv, "bin", "pip"), "install", *DEPS],
+                       check=True)
+    python = os.path.join(venv, "bin", "python")
+    os.execv(python, [python, os.path.abspath(__file__), *sys.argv[1:]])
+
+
+try:
+    import paramiko
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+except ImportError:
+    bootstrap()
 
 # this file rewrites itself between sessions, so the operator side must never import code.
 # frame mirrored from server.py

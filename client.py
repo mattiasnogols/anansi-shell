@@ -6,6 +6,7 @@ import base64
 import io
 import os
 import random
+import re
 import struct
 import subprocess
 import time
@@ -183,11 +184,16 @@ def selfcheck():
     raise SystemExit("failed check: tamper undetected")
 
 
+# Mutation: a name is renamable when the region defines it.
+# skips names found in the region's string literals.
+
 def split_mutable(source):
-    """Split own source into."""
+    """Split own source."""
     lines = source.splitlines(keepends=True)
+    # markers stay in head/tail
     start = [i for i, line in enumerate(lines) if line.strip() == MUTABLE_START]
     end = [i for i, line in enumerate(lines) if line.strip() == MUTABLE_END]
+    # start above end, or refuse
     if len(start) != 1 or len(end) != 1 or start[0] > end[0]:
         raise ValueError("mutable markers malformed")
     i, j = start[0], end[0]
@@ -196,6 +202,7 @@ def split_mutable(source):
 
 def internal_names(region, immutable):
     """Defined in the region, not loaded outside."""
+    # names inside strings or comments do not count
     defined = set()
     for node in ast.walk(ast.parse(region)):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -206,6 +213,7 @@ def internal_names(region, immutable):
             defined.add(node.id)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             defined.add(node.name)
+    # names read by the immutable half: main() calls session(), locals like "key" in selfcheck()
     outside = {node.id for node in ast.walk(ast.parse(immutable))
                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
     return defined - outside
@@ -213,11 +221,40 @@ def internal_names(region, immutable):
 
 def string_literals(region):
     """Renames must not corrupt these."""
+    # STRING tokens are real string literals
     blobs = []
     for token in tokenize.generate_tokens(io.StringIO(region).readline):
         if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE):
             blobs.append(token.string)
     return " ".join(blobs)
+
+
+def fresh_name(taken):
+    """New identifier"""
+    while True:
+        name = "".join(random.choice("bcdfgklmnprstvz") + random.choice("aeiou")
+                       for _ in range(random.randint(2, 3)))
+        if name not in taken:
+            taken.add(name)
+            return name
+
+
+def rename_transform(source):
+    """Rewrite the region with new internal names."""
+    head, region, tail = split_mutable(source)
+    taken = set(re.findall(r"\b[A-Za-z_]\w*\b", source))
+    mapping = {}
+    for name in sorted(internal_names(region, head + tail)):
+        mapping[name] = fresh_name(taken)
+    # replace NAME tokens only
+    lines = region.splitlines(keepends=True)
+    tokens = tokenize.generate_tokens(io.StringIO(region).readline)
+    edits = [t for t in tokens if t.type == tokenize.NAME and t.string in mapping]
+    for token in sorted(edits, key=lambda tok: tok.start, reverse=True):
+        row, col = token.start
+        end = token.end[1]
+        lines[row - 1] = lines[row - 1][:col] + mapping[token.string] + lines[row - 1][end:]
+    return head + "".join(lines) + tail
 
 
 def main():

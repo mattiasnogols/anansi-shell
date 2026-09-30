@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -84,6 +85,58 @@ def read_exactly(channel, count):
             raise EOFError("channel closed mid-frame")
         data += chunk
     return data
+
+
+# https wrapper; the client speaks requests, the server responses
+REQUEST_METHODS = ("POST", "PUT")
+REQUEST_HOSTS = ("cdn.jsdelivr.net", "www.googletagmanager.com",
+                 "fonts.gstatic.com", "static.cloudflareinsights.com")
+REQUEST_AGENTS = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                  "curl/8.5.0")
+HEAD_LIMIT = 8192
+
+
+def wrap_request(body):
+    """Wrap a body in a HTTP request."""
+    path = "/" + "".join(random.choices("0123456789abcdef", k=16))
+    head = (f"{random.choice(REQUEST_METHODS)} {path} HTTP/1.1\r\n"
+            f"Host: {random.choice(REQUEST_HOSTS)}\r\n"
+            f"User-Agent: {random.choice(REQUEST_AGENTS)}\r\n"
+            "Content-Type: application/octet-stream\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n")
+    return head.encode("ascii") + body
+
+
+def recv_head(channel):
+    # headers end at a blank line which leave no buffer state
+    head = b""
+    while not head.endswith(b"\r\n\r\n"):
+        if len(head) > HEAD_LIMIT:
+            raise ValueError("http head not terminated")
+        byte = channel.recv(1)
+        if not byte:
+            raise EOFError("channel closed mid-head")
+        head += byte
+    return head
+
+
+def unwrap_frame(channel):
+    """Read one HTTP message, return its body."""
+    head = recv_head(channel).decode("ascii", errors="replace")
+    length = None
+    for line in head.split("\r\n")[1:]:
+        name, sep, value = line.partition(":")
+        if sep and name.strip().lower() == "content-length":
+            length = int(value.strip())
+            break
+    if length is None or not 0 <= length <= MAX_FRAME:
+        raise ValueError(f"bad content-length: {length}")
+    return read_exactly(channel, length)
 
 
 def send_frame(channel, key, algo, plaintext):
@@ -212,6 +265,13 @@ def selfcheck():
     for algo in AEAD:
         if unseal_frame(key, seal_frame(key, algo, b"ping")) != b"ping":
             raise SystemExit("failed check: codec")
+    # a real socket pair for recv path
+    a, b = socket.socketpair()
+    a.sendall(wrap_request(seal_frame(key, 1, b"ping")))
+    if unseal_frame(key, unwrap_frame(b)) != b"ping":
+        raise SystemExit("failed check: wrapper")
+    a.close()
+    b.close()
     body = bytearray(seal_frame(key, 1, b"ping"))
     body[20] ^= 1
     try:

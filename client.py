@@ -255,16 +255,6 @@ def internal_names(region, immutable):
     return defined - outside
 
 
-def string_literals(region):
-    """Renames must not corrupt these."""
-    # STRING tokens == real string literals
-    blobs = []
-    for token in tokenize.generate_tokens(io.StringIO(region).readline):
-        if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE):
-            blobs.append(token.string)
-    return " ".join(blobs)
-
-
 def fresh_name(used_names):
     """New identifier"""
     while True:

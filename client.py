@@ -11,7 +11,6 @@ import shlex
 import shutil
 import signal
 import socket
-import struct
 import subprocess
 import sys
 import tempfile
@@ -140,20 +139,17 @@ def unwrap_frame(channel):
 
 
 def send_frame(channel, key, algo, plaintext):
-    body = seal_frame(key, algo, plaintext)
-    channel.sendall(struct.pack(">I", len(body)) + body)
+    # sealed frame inside the http wrapper
+    channel.sendall(wrap_request(seal_frame(key, algo, plaintext)))
 
 
 def recv_frame(channel):
-    (length,) = struct.unpack(">I", read_exactly(channel, 4))
-    if length > MAX_FRAME:
-        raise ValueError(f"frame exceeds {MAX_FRAME} bytes: {length}")
-    return read_exactly(channel, length)
+    return unwrap_frame(channel)
 
 
 def send_raw(channel, blob):
     # public handshake (unencrypted)
-    channel.sendall(struct.pack(">I", len(blob)) + blob)
+    channel.sendall(wrap_request(blob))
 
 
 def handshake(channel):

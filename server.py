@@ -215,11 +215,31 @@ def serve(bind, port, host_key, password):
             transport.close()
 
 
+def serve_tcp(bind, port):
+    # demo no ssh auth, the wrapper uses bare socket
+    listener = socket.create_server((bind, port))
+    print(f"listening on {bind}:{port}", flush=True)
+    while True:
+        sock, addr = listener.accept()
+        print(f"session from {addr[0]}:{addr[1]}", flush=True)
+        try:
+            handle_session(sock)
+        except Exception as exc:
+            print(f"connection failed: {exc!r}", file=sys.stderr, flush=True)
+        finally:
+            sock.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="anansi-shell operator server")
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2222)
+    parser.add_argument("--transport", choices=("ssh", "tcp"), default="ssh",
+                        help="demo no auth, wrapper on the wire")
     args = parser.parse_args()
+    if args.transport == "tcp":
+        serve_tcp(args.bind, args.port)
+        return
     host_key = load_host_key("server_host_key")
     password = secrets.token_urlsafe(12)
     print(f"host key fingerprint: {host_key.fingerprint}", flush=True)

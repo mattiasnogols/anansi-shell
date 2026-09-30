@@ -35,6 +35,12 @@ If the server is not up yet, the client retries until it answers (built-in jitte
 
 `exit` or Ctrl-D closes the session and the server returns to listening for the next connection.
 
+Every session frame can be wrapped in a HTTP frame. To capture that with Wireshark, run both sides
+with `--transport tcp` (demo purposes, no auth):
+
+    .venv/bin/python server.py --transport tcp
+    .venv/bin/python client.py --transport tcp --host <server-ip>
+
 
 ## License
 

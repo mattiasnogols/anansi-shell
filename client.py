@@ -7,6 +7,7 @@ import io
 import os
 import random
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -167,9 +168,13 @@ def session(channel, verbose):
 
 def execute(command):
     """Run a command"""
-    words = command.split()
-    # cd must run here, not in the subprocess: a chdir would die with its shell
-    if words[:1] == ["cd"]:
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    # cd x && ls runs in the child shell, where the chdir
+    # dies with it and the cwd change doesn't persist
+    if words[:1] == ["cd"] and len(words) <= 2:
         return change_dir(words[1] if len(words) > 1 else "")
     try:
         done = subprocess.run(command, shell=True, capture_output=True,
@@ -208,7 +213,6 @@ def selfcheck():
 
 
 # Mutation: a name is renamable when the region defines it.
-# skips names found in the region's string literals.
 
 def split_mutable(source):
     """Split own source."""
@@ -236,7 +240,7 @@ def internal_names(region, immutable):
             defined.add(node.id)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             defined.add(node.name)
-    # names read by the immutable half: main() calls session(), locals like "key" in selfcheck()
+    # names read by immutable half: main() calls session(), locals like "key" in selfcheck()
     outside = {node.id for node in ast.walk(ast.parse(immutable))
                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
     return defined - outside
@@ -244,7 +248,7 @@ def internal_names(region, immutable):
 
 def string_literals(region):
     """Renames must not corrupt these."""
-    # STRING tokens are real string literals
+    # STRING tokens == real string literals
     blobs = []
     for token in tokenize.generate_tokens(io.StringIO(region).readline):
         if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE):
@@ -280,8 +284,8 @@ def rename_transform(source):
     return head + "".join(lines) + tail
 
 
-# else, elif, except, finally statements are never visited:
-# inserting a line above one of those would detach it from its statement.
+# else, elif, except, finally statements never visited.
+# inserting a line above one of those detaches it from its statement.
 BLOCK_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.If, ast.For,
                ast.AsyncFor, ast.While, ast.With, ast.Try)
 
@@ -321,7 +325,7 @@ def junk_line(indent, used_names):
 
 
 def junk_transform(source):
-    """Insert inert statements at boundaries inside the region."""
+    """Insert statements at boundaries inside the region."""
     head, region, tail = split_mutable(source)
     used_names = set(re.findall(r"\b[A-Za-z_]\w*\b", source))
     lines = region.splitlines(keepends=True)
@@ -379,7 +383,7 @@ def mutate_self(path, verbose):
                                        suffix=".py")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(candidate)
-        # sys.executable is certain; python3 may resolve elsewhere and fail imports
+        # sys.executable chosen; python3 may resolve elsewhere and fail imports
         check = subprocess.run([sys.executable, scratch, "--selfcheck"],
                                capture_output=True, timeout=SELFCHECK_TIMEOUT)
         if check.returncode:

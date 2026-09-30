@@ -382,6 +382,8 @@ def mutate_self(path, verbose):
                                        suffix=".py")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(candidate)
+        # mkstemp starts at 0600
+        os.chmod(scratch, os.stat(path).st_mode)
         # sys.executable chosen; python3 may resolve elsewhere and fail imports
         check = subprocess.run([sys.executable, scratch, "--selfcheck"],
                                capture_output=True, timeout=SELFCHECK_TIMEOUT)

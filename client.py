@@ -151,10 +151,6 @@ def session(channel, verbose):
     algo = random.choice(list(AEAD))
     while True:
         data = unseal_frame(key, recv_frame(channel))
-        if data == b"ping":
-            # liveness probe
-            send_frame(channel, key, algo, b"pong")
-            continue
         if data == b"exit":
             # operator closed the session
             return

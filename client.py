@@ -159,12 +159,13 @@ def session(channel, verbose):
         text = data.decode(errors="replace")
         if verbose:
             print(f"$ {text}", flush=True)
-        reply = execute(text)
-        # b"o" = output, b"d" = cwd, ends the reply
+        reply, rc = execute(text)
+        # b"o" = output, b"d" = cwd + NUL + exit status, ends the reply
         # 512 KiB chunks keep every frame under MAX_FRAME
         for start in range(0, len(reply), CHUNK):
             send_frame(channel, key, algo, b"o" + reply[start:start + CHUNK])
-        send_frame(channel, key, algo, b"d" + os.getcwd().encode())
+        send_frame(channel, key, algo, b"d" + os.getcwd().encode() +
+                   b"\x00" + str(rc).encode())
 
 
 def execute(command):
@@ -181,22 +182,23 @@ def execute(command):
         proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, start_new_session=True)
         out, err = proc.communicate(timeout=COMMAND_TIMEOUT)
-        return out + err
+        return out + err, proc.returncode
     except subprocess.TimeoutExpired:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         proc.wait()
-        return b"command timed out\n"
+        # coreutils timeout
+        return b"command timed out\n", 124
 
 
 def change_dir(arg):
     try:
         os.chdir(os.path.expanduser(arg or "~"))
     except OSError as exc:
-        return f"cd: {exc}".encode()
-    return b""
+        return f"cd: {exc}".encode(), 1
+    return b"", 0
 # --- MUTABLE END ---
 
 

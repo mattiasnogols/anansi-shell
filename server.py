@@ -136,11 +136,16 @@ def handle_session(channel):
                 send_frame(channel, key, algo, b"exit")
                 return
             send_frame(channel, key, algo, command.encode())
-            # one reply = b"o" output frames, ended by one b"d" frame with cwd
+            # one reply = b"o" output frames, ended by one b"d" frame
+            # carrying the cwd, a NUL, then the exit status
             while True:
                 payload = unseal_frame(key, recv_frame(channel))
                 if payload[:1] == b"d":
-                    cwd = payload[1:].decode(errors="replace")
+                    path, _, rc = payload[1:].partition(b"\x00")
+                    cwd = path.decode(errors="replace")
+                    # only failures speak; success keeps the console quiet
+                    if rc not in (b"", b"0"):
+                        print(f"[exit {rc.decode()}]", flush=True)
                     break
                 # command output need not be valid UTF-8
                 sys.stdout.buffer.write(payload[1:])

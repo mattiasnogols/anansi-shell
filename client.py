@@ -9,6 +9,7 @@ import random
 import re
 import shlex
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -177,10 +178,16 @@ def execute(command):
     if words[:1] == ["cd"] and len(words) <= 2:
         return change_dir(words[1] if len(words) > 1 else "")
     try:
-        done = subprocess.run(command, shell=True, capture_output=True,
-                              timeout=COMMAND_TIMEOUT)
-        return done.stdout + done.stderr
+        proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=True)
+        out, err = proc.communicate(timeout=COMMAND_TIMEOUT)
+        return out + err
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
         return b"command timed out\n"
 
 

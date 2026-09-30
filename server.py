@@ -51,6 +51,50 @@ def read_exactly(channel, count):
     return data
 
 
+# https-style wrapper
+RESPONSE_SERVERS = ("nginx/1.24.0 (Ubuntu)", "Apache/2.4.58 (Unix)",
+                    "lighttpd/1.4.71")
+HEAD_LIMIT = 8192
+
+
+def wrap_response(body):
+    """Wrap a body in a HTTP response."""
+    head = ("HTTP/1.1 200 OK\r\n"
+            f"Server: {random.choice(RESPONSE_SERVERS)}\r\n"
+            "Content-Type: application/octet-stream\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n")
+    return head.encode("ascii") + body
+
+
+def recv_head(channel):
+    # headers end at a blank line which leave no buffer state
+    head = b""
+    while not head.endswith(b"\r\n\r\n"):
+        if len(head) > HEAD_LIMIT:
+            raise ValueError("http head not terminated")
+        byte = channel.recv(1)
+        if not byte:
+            raise EOFError("channel closed mid-head")
+        head += byte
+    return head
+
+
+def unwrap_frame(channel):
+    """Read one HTTP message, return its body."""
+    head = recv_head(channel).decode("ascii", errors="replace")
+    length = None
+    for line in head.split("\r\n")[1:]:
+        name, sep, value = line.partition(":")
+        if sep and name.strip().lower() == "content-length":
+            length = int(value.strip())
+            break
+    if length is None or not 0 <= length <= MAX_FRAME:
+        raise ValueError(f"bad content-length: {length}")
+    return read_exactly(channel, length)
+
+
 def send_frame(channel, key, algo, plaintext):
     body = seal_frame(key, algo, plaintext)
     channel.sendall(struct.pack(">I", len(body)) + body)

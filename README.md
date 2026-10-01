@@ -1,7 +1,7 @@
 # anansi-shell
 
 A polymorphic SSH reverse shell. The client rewrites parts of its own source after each session
-and keeps working, while traffic travels inside an SSH channel.
+and keeps working, while traffic travels inside an SSH channel. Given script has been tested on Debian-based distributions, other targets may require additional tweaking.
 
 **This tool is created for educational purposes only. Do not point it at systems for which you do not have explicit authorization.**
 
